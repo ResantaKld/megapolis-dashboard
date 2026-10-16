@@ -7,10 +7,20 @@ on:
 
 permissions:
   contents: write
+  pages: write            # нужно для публикации на GitHub Pages
+  id-token: write         # нужно для публикации на GitHub Pages
+
+# чтобы одновременные запуски не конфликтовали при публикации Pages
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
 
 jobs:
   fetch-dashboard:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
 
@@ -26,22 +36,34 @@ jobs:
           fi
           echo "download_href=$HREF" >> "$GITHUB_ENV"
         env:
-          PUBLIC_KEY: "https://yadi.sk/d/r5QDJ_HfTJY0yQ"
+          PUBLIC_KEY: "https://yadi.sk/d/stoVWKDsxFve7w"
 
       - name: Скачать дашборд
         run: |
-          curl -sSL "$download_href" -o "дашборд_остатков_по_тц (с ассортиментом).html"
+          curl -sSL "$download_href" -o "index.html"
           ls -la
-          wc -c "дашборд_остатков_по_тц (с ассортиментом).html"
+          wc -c "index.html"
 
       - name: Закоммитить изменения (если файл изменился)
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "дашборд_остатков_по_тц (с ассортиментом).html"
+          git add "index.html"
           if git diff --cached --quiet; then
             echo "Файл не изменился — коммит не нужен"
             exit 0
           fi
           git commit -m "Обновление дашборда с Яндекс.Диска ($(date -u +'%Y-%m-%d %H:%M') UTC)"
           git push
+
+      - name: Настроить GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Упаковать сайт для публикации
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: "."
+
+      - name: Опубликовать на GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
