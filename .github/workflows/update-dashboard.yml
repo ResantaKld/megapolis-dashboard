@@ -1,0 +1,47 @@
+name: Обновить дашборд с Яндекс.Диска
+
+on:
+  schedule:
+    - cron: "0 6 * * *"   # каждый день в 08:00 по времени Калининграда (06:00 UTC)
+  workflow_dispatch:       # позволяет запустить вручную кнопкой "Run workflow"
+
+permissions:
+  contents: write
+
+jobs:
+  fetch-dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Получить прямую ссылку через публичный API Яндекс.Диска
+        run: |
+          curl -sS "https://cloud-api.yandex.net/v1/disk/public/resources/download?public_key=${PUBLIC_KEY}" -o link.json
+          echo "--- ответ API ---"
+          cat link.json
+          HREF=$(jq -r .href link.json)
+          if [ -z "$HREF" ] || [ "$HREF" = "null" ]; then
+            echo "Не удалось получить ссылку на скачивание" >&2
+            exit 1
+          fi
+          echo "download_href=$HREF" >> "$GITHUB_ENV"
+        env:
+          PUBLIC_KEY: "https://yadi.sk/d/r5QDJ_HfTJY0yQ"
+
+      - name: Скачать дашборд
+        run: |
+          curl -sSL "$download_href" -o "дашборд_остатков_по_тц (с ассортиментом).html"
+          ls -la
+          wc -c "дашборд_остатков_по_тц (с ассортиментом).html"
+
+      - name: Закоммитить изменения (если файл изменился)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "дашборд_остатков_по_тц (с ассортиментом).html"
+          if git diff --cached --quiet; then
+            echo "Файл не изменился — коммит не нужен"
+            exit 0
+          fi
+          git commit -m "Обновление дашборда с Яндекс.Диска ($(date -u +'%Y-%m-%d %H:%M') UTC)"
+          git push
