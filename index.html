@@ -79,12 +79,67 @@ td.kr-edit { background: #e3f2fd; font-weight: 600; color: #1565c0; cursor: text
 td.kr-edit:focus { outline: 2px solid #1565c0; }
 .col-resizer { position: absolute; right: 0; top: 0; width: 7px; height: 100%; cursor: col-resize; z-index: 2; }
 .col-resizer:hover { background: rgba(26, 35, 126, 0.25); }
+
+/* ---- Точка входа ---- */
+#login-overlay{position:fixed;inset:0;background:linear-gradient(135deg,#1a237e 0%,#283593 100%);display:flex;align-items:center;justify-content:center;z-index:99999;}
+#login-card{background:#fff;border-radius:14px;padding:30px 34px;width:340px;max-width:92vw;box-shadow:0 24px 64px rgba(0,0,0,.45);}
+#login-card h2{margin:0 0 4px;font-size:20px;color:#1a237e;}
+#login-card .sub{font-size:12px;color:#64748b;margin-bottom:18px;}
+#login-card label{display:block;font-size:12px;color:#475569;margin:10px 0 4px;font-weight:600;}
+#login-card input{width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;}
+#login-card input:focus{outline:2px solid #3b82f6;border-color:#3b82f6;}
+#login-btn{width:100%;margin-top:16px;padding:10px;background:#283593;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;}
+#login-btn:hover{background:#1a237e;}
+#login-err{color:#dc2626;font-size:12px;margin-top:10px;min-height:16px;}
+.logout-btn{position:absolute;top:20px;right:22px;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.4);border-radius:8px;padding:6px 16px;font-size:12px;cursor:pointer;}
+.logout-btn:hover{background:rgba(255,255,255,.28);}
+.header{position:relative;}
 </style>
 </head>
 <body>
+<div id="login-overlay">
+<div id="login-card">
+<h2>Дашборд остатков по ТЦ</h2>
+<div class="sub">Мегаполис-Балтика · Калининград</div>
+<form id="login-form" autocomplete="off">
+<label>Логин</label>
+<input type="text" id="login-user" required>
+<label>Пароль</label>
+<input type="password" id="login-pass" required>
+<button id="login-btn" type="submit">Войти</button>
+<div id="login-err"></div>
+</form>
+</div>
+</div>
+<script>
+var DASH_SALT='MGB-2026::';
+var DASH_USERS={'KLDResanta':'76fd3cf63a9a6d00aac25846d31c92edb80f190a6eacd4529a9ff187a4afc16a','golovanov_am@resanta.ru':'cbd0fbb04e60bd792725181e13fd49d8986f714c57e8b619f6b367ee322f7a6e','A.Shipulin@megapolys.com':'0d928aa7f6696e0e502fcfee7c4b888a78e77496225da39ada81566b1e27de47'};
+async function dashHash(s){var b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(DASH_SALT+s));return Array.from(new Uint8Array(b)).map(function(x){return x.toString(16).padStart(2,'0');}).join('');}
+async function dashTryLogin(ev){
+  ev.preventDefault();
+  var u=document.getElementById('login-user').value.trim();
+  var p=document.getElementById('login-pass').value;
+  var h=await dashHash(p);
+  if(DASH_USERS[u]&&h===DASH_USERS[u]){
+    sessionStorage.setItem('dashAuth',u);
+    document.getElementById('login-overlay').style.display='none';
+    document.getElementById('login-err').textContent='';
+  }else{
+    document.getElementById('login-err').textContent='Неверный логин или пароль';
+    document.getElementById('login-pass').value='';
+  }
+}
+document.getElementById('login-form').addEventListener('submit',dashTryLogin);
+if(sessionStorage.getItem('dashAuth')&&DASH_USERS[sessionStorage.getItem('dashAuth')]){
+  document.getElementById('login-overlay').style.display='none';
+}
+function dashLogout(){sessionStorage.removeItem('dashAuth');location.reload();}
+</script>
+
 <div class="header">
 <h1>Дашборд остатков по ТЦ</h1>
 <p>Продажи с 14.09.2026 по 14.10.2026 | Данные по 6 ТЦ | Остатки и товары в пути</p>
+<button class="logout-btn" onclick="dashLogout()">Выйти</button>
 </div>
 <div class="tabs">
 <button class="tab-btn active" onclick="showTab('summary')">Сводка</button>
