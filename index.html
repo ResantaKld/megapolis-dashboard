@@ -111,6 +111,12 @@ td.kr-edit:focus { outline: 2px solid #1565c0; }
 .doc-dl{background:#283593;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;text-decoration:none;white-space:nowrap;}
 .doc-dl:hover{background:#1a237e;}
 .doc-empty{color:#94a3b8;font-size:13px;padding:18px;background:#fff;border-radius:12px;border:1px dashed #cbd5e1;text-align:center;}
+
+.cloud-sync-bar{background:#e8eaf6;border:1px solid #c5cae9;border-radius:10px;padding:10px 16px;font-size:13px;color:#283593;margin-bottom:12px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+.cloud-sync-bar .cs-status{font-weight:600;}
+.cloud-sync-bar button{background:#283593;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:13px;font-weight:600;cursor:pointer;}
+.cloud-sync-bar button:hover{background:#1a237e;}
+.cloud-sync-bar .cs-hint{color:#5c6bc0;font-size:12px;}
 </style>
 </head>
 <body>
@@ -4130,6 +4136,8 @@ function dashLogout(){sessionStorage.removeItem('dashAuth');location.reload();}
 <button onclick="ordDeleteSelected()">Удалить выбранные</button>
 <button onclick="document.getElementById('ord-file').click()">Загрузить Excel</button>
 <input type="file" id="ord-file" accept=".xlsx,.xls,.csv" style="display:none" onchange="importOrderFile(this)">
+<button onclick="ordCloudPush()" style="background:#1565c0;color:#fff;border-color:#0d47a1;">Сохранить общий заказ</button>
+<button onclick="ordCloudPull()">Загрузить общий заказ</button>
 <button onclick="exportOrder()">Скачать Excel</button>
 </div>
 <div class="filters" id="ord-add-box" style="position:relative;">
@@ -4139,6 +4147,7 @@ function dashLogout(){sessionStorage.removeItem('dashAuth');location.reload();}
 <button onclick="ordAddFromInput()" style="background:#2e7d32;color:#fff;border-color:#1b5e20;">Добавить позицию</button>
 <input type="text" id="search-Заказ" placeholder="Поиск по заказу (код/название)..." oninput="renderOrder()">
 </div>
+<div class="cloud-sync-bar" id="cloud-sync-bar">☁️ <b>Общий заказ:</b> <span class="cs-status" id="cs-status">—</span> <button onclick="ordCloudPush()">Сохранить общий заказ</button> <button onclick="ordCloudPull()">Загрузить общий заказ</button> <span class="cs-hint">сохранённый заказ виден на всех компьютерах после перезагрузки страницы</span></div>
 <div class="table-container"><table class="data-table" id="table-Заказ">
 <tr><th style="width:28px;"><input type="checkbox" id="ord-chk-all" onchange="ordToggleAll(this)"></th><th>Код</th><th>Артикул</th><th>Номенклатура</th><th>ABC</th><th>Продажи (11 дн.)</th><th>Продажи/день</th><th>Остаток</th><th>В пути</th><th>Кратность</th><th>Заказать, шт.</th><th>Заказ в Балтийск</th><th>Заказ в Советск</th><th>Заказ в Черняховск</th><th>Заказ в Мира</th><th>Заказ в Емельянова-Энергетиков</th><th>Заказ в Камская</th><th>Цена закуп., руб.</th><th>Сумма, руб.</th></tr>
 </table></div>
@@ -4454,6 +4463,100 @@ function makeOrderBySales() {
     renderOrder();
 }
 
+
+var ORD_CLOUD_KEY = 'mgb-dash-order-64747b8b14de4524';
+
+var ORD_CLOUD_URL = 'https://textdb.online/' + ORD_CLOUD_KEY;
+function ordCloudStatus(msg, ok) {
+    var el = document.getElementById('cs-status');
+    if (el) el.textContent = msg;
+    if (el) el.style.color = ok === false ? '#c62828' : (ok === true ? '#1b5e20' : '#283593');
+}
+function ordCloudPush() {
+    if (!ORD_ALL.length) { ordCloudStatus('заказ пуст — сохранять нечего', false); return; }
+    ordCloudStatus('сохранение...');
+    var payload = JSON.stringify({v: 1, ts: Date.now(), mode: document.getElementById('ord-mode').textContent, sub: document.getElementById('ord-mode-sub').textContent, rows: ORD_ALL});
+    fetch('https://textdb.online/update/?key=' + ORD_CLOUD_KEY + '&value=' + encodeURIComponent(payload), {method: 'GET', cache: 'no-store'})
+        .then(function(r) { return r.json(); })
+        .then(function(j) {
+            if (j.status === 1) {
+                ordCloudStatus('✓ сохранён общий заказ (' + new Date().toLocaleTimeString('ru-RU') + ')', true);
+                try { localStorage.setItem('dash_cloud_ts', String(j.req_id || '')); } catch (e) {}
+            } else { ordCloudStatus('ошибка сохранения', false); }
+        })
+        .catch(function() { ordCloudStatus('нет связи с хранилищем', false); });
+}
+function ordCloudApplyRemote(s, silent) {
+    ORD_ALL = s.rows.map(function(r) {
+        return {code: r.code, qty: r.qty || 0, stores: [0,1,2,3,4,5].map(function(k) { return (r.stores && r.stores[k]) || 0; })};
+    });
+    document.getElementById('ord-mode').textContent = s.mode || 'общий заказ';
+    document.getElementById('ord-mode-sub').textContent = (s.sub || '') + ' · изменён ' + new Date(s.ts).toLocaleString('ru-RU');
+    document.getElementById('ord-showzero').checked = false;
+    renderOrder();
+    if (!silent) ordCloudStatus('✓ загружен общий заказ от ' + new Date(s.ts).toLocaleString('ru-RU'), true);
+}
+function ordCloudPull() {
+    ordCloudStatus('загрузка...');
+    fetch(ORD_CLOUD_URL + '?nocache=' + Date.now(), {method: 'GET', cache: 'no-store'})
+        .then(function(r) { return r.text(); })
+        .then(function(t) {
+            if (!t.trim()) { ordCloudStatus('общий заказ ещё не сохранялся', false); return; }
+            var s;
+            try { s = JSON.parse(t); } catch (e) { ordCloudStatus('ошибка данных', false); return; }
+            if (s && s.rows && s.rows.length) ordCloudApplyRemote(s, false);
+            else ordCloudStatus('общий заказ пуст', false);
+        })
+        .catch(function() { ordCloudStatus('нет связи с хранилищем', false); });
+}
+function ordCloudAutoLoad() {
+    if (!ORD_ALL.length) {
+        fetch(ORD_CLOUD_URL + '?nocache=' + Date.now(), {method: 'GET', cache: 'no-store'})
+            .then(function(r) { return r.text(); })
+            .then(function(t) {
+                if (!t.trim()) { ordCloudStatus('общего заказа пока нет'); return; }
+                try {
+                    var s = JSON.parse(t);
+                    if (s && s.rows && s.rows.length) { ordCloudApplyRemote(s, true); ordCloudStatus('✓ общий заказ от ' + new Date(s.ts).toLocaleString('ru-RU'), true); }
+                    else ordCloudStatus('общего заказа пока нет');
+                } catch (e) { ordCloudStatus('—'); }
+            })
+            .catch(function() { ordCloudStatus('—'); });
+    } else {
+        ordCloudStatus('есть локальный заказ — «Сохранить общий заказ», чтобы сделать его общим');
+    }
+}
+
+function ordSaveState() {
+    try {
+        var mode = document.getElementById('ord-mode');
+        var sub = document.getElementById('ord-mode-sub');
+        localStorage.setItem('dash_order_v1', JSON.stringify({
+            v: 1,
+            ts: Date.now(),
+            mode: mode ? mode.textContent : '',
+            sub: sub ? sub.textContent : '',
+            rows: ORD_ALL
+        }));
+    } catch (e) {}
+}
+function ordRestoreState() {
+    try {
+        var raw = localStorage.getItem('dash_order_v1');
+        if (!raw) return;
+        var s = JSON.parse(raw);
+        if (!s || !s.rows || !s.rows.length) return;
+        ORD_ALL = s.rows.map(function(r) {
+            return {code: r.code, qty: r.qty || 0, stores: [0,1,2,3,4,5].map(function(k) { return (r.stores && r.stores[k]) || 0; })};
+        });
+        var mode = document.getElementById('ord-mode');
+        var sub = document.getElementById('ord-mode-sub');
+        if (mode) mode.textContent = s.mode || 'сохранённый заказ';
+        if (sub) sub.textContent = s.sub || ('восстановлен из сохранения · ' + new Date(s.ts).toLocaleString('ru-RU'));
+        document.getElementById('ord-showzero').checked = false;
+        renderOrder();
+    } catch (e) {}
+}
 function renderOrder() {
     var table = document.getElementById('table-Заказ');
     var header = table.querySelector('tr');
@@ -4500,6 +4603,7 @@ function renderOrder() {
     document.getElementById('count-Заказ').textContent = ORD_ALL.length ? ('Показано: ' + shown + ' из ' + ORD_ALL.length + ' позиций') : 'Заказ пуст — сформируйте по продажам, добавьте вручную или загрузите Excel';
     updateOrderTotals();
     ordSetupResizers();
+    ordSaveState();
 }
 
 function updateOrderTotals() {
@@ -4548,6 +4652,7 @@ document.getElementById('table-Заказ').addEventListener('input', function(e
     var d = ORDER_DATA[code];
     tds[18].textContent = (d && d.p) ? ordFmtF(r.qty * d.p) : '—';
     updateOrderTotals();
+    ordSaveState();
 });
 
 function ordToggleAll(cb) {
@@ -5127,6 +5232,7 @@ function renderOrder() {
     document.getElementById('count-Заказ').textContent = ORD_ALL.length ? ('Показано: ' + shown + ' из ' + ORD_ALL.length + ' позиций') : 'Заказ пуст — сформируйте по продажам, добавьте вручную или загрузите Excel';
     updateOrderTotals();
     ordSetupResizers();
+    ordSaveState();
 }
 
 // ===================== ОБНОВЛЕНИЕ ОСТАТКОВ v20 — файлы по ТЦ =====================
@@ -5573,6 +5679,8 @@ function applyRestockSnapshot(){
   if (unmatched.length) console.warn('Позиции выгрузки без строк в дашборде: ' + unmatched.join('; '));
 }
 applyRestockSnapshot();
+ordRestoreState();
+ordCloudAutoLoad();
 </script>
 </body>
 </html>
