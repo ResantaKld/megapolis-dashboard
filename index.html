@@ -117,6 +117,16 @@ td.kr-edit:focus { outline: 2px solid #1565c0; }
 .cloud-sync-bar button{background:#283593;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:13px;font-weight:600;cursor:pointer;}
 .cloud-sync-bar button:hover{background:#1a237e;}
 .cloud-sync-bar .cs-hint{color:#5c6bc0;font-size:12px;}
+
+/* ---- Всплывающие подсказки «Заказ»: остаток/в пути по магазинам ---- */
+#ord-tip{position:fixed;display:none;background:#1e293b;color:#fff;padding:9px 13px;border-radius:8px;font-size:12px;line-height:1.55;z-index:9999;pointer-events:none;box-shadow:0 6px 18px rgba(0,0,0,.28);white-space:nowrap;}
+#ord-tip .tip-row{display:flex;justify-content:space-between;gap:18px;}
+#ord-tip .tip-row b{font-variant-numeric:tabular-nums;}
+#ord-tip .tip-head{font-weight:700;margin-bottom:4px;color:#94a3b8;font-size:11px;letter-spacing:.4px;}
+#ord-tip .tip-zero{color:#64748b;}
+#ord-tip .tip-total{border-top:1px solid #475569;margin-top:4px;padding-top:4px;display:flex;justify-content:space-between;gap:18px;}
+.ord-td-tip{cursor:help;}
+.ord-td-tip:hover{background:#e8eaf6 !important;}
 </style>
 </head>
 <body>
@@ -4579,6 +4589,57 @@ function ordCloudAutoLoad() {
         ordCloudStatus('есть локальный заказ — «Сохранить общий заказ», чтобы сделать его общим');
     }
 }
+
+// Всплывающие подсказки «Заказ»: остаток и «в пути» по магазинам
+var ordTipEl = null;
+function ordTipHtml(code, kind) {
+    var d = ORDER_DATA[code];
+    if (!d) return '';
+    var arr = kind === 't' ? d.t : d.k;
+    var head = kind === 't' ? 'В ПУТИ ПО МАГАЗИНАМ' : 'ОСТАТОК ПО МАГАЗИНАМ';
+    var rows = '';
+    for (var i = 0; i < 6; i++) {
+        var v = arr[i] || 0;
+        rows += '<div class="tip-row' + (v === 0 ? ' tip-zero' : '') + '"><span>' + ORD_STORES[i] + '</span><b>' + v + ' шт</b></div>';
+    }
+    var tot = 0; for (var i2 = 0; i2 < 6; i2++) tot += (arr[i2] || 0);
+    return '<div class="tip-head">' + head + '</div>' + rows + '<div class="tip-total"><span>Итого</span><b>' + tot + ' шт</b></div>';
+}
+function ordTipPos(e) {
+    var x = e.clientX + 14, y = e.clientY + 18;
+    var r = ordTipEl.getBoundingClientRect();
+    if (x + r.width > window.innerWidth - 8) x = e.clientX - r.width - 14;
+    if (y + r.height > window.innerHeight - 8) y = e.clientY - r.height - 12;
+    ordTipEl.style.left = x + 'px';
+    ordTipEl.style.top = y + 'px';
+}
+(function() {
+    ordTipEl = document.createElement('div');
+    ordTipEl.id = 'ord-tip';
+    document.body.appendChild(ordTipEl);
+    var table = document.getElementById('table-Заказ');
+    if (!table) return;
+    table.addEventListener('mouseover', function(e) {
+        var td = e.target.closest('td.ord-td-tip');
+        if (!td) return;
+        var tr = td.closest('tr');
+        var code = tr && tr.getAttribute('data-code');
+        if (!code) return;
+        var h = ordTipHtml(code, td.getAttribute('data-tipkind'));
+        if (!h) return;
+        ordTipEl.innerHTML = h;
+        ordTipEl.style.display = 'block';
+        ordTipPos(e);
+    });
+    table.addEventListener('mouseout', function(e) {
+        var td = e.target.closest('td.ord-td-tip');
+        if (td) ordTipEl.style.display = 'none';
+    });
+    table.addEventListener('mousemove', function(e) {
+        if (ordTipEl.style.display === 'block') ordTipPos(e);
+    });
+})();
+
 function ordSaveState() {
     try {
         var mode = document.getElementById('ord-mode');
@@ -4637,8 +4698,8 @@ function renderOrder() {
             + '<td>' + ordBadge(d ? d.g : '') + '</td>'
             + '<td>' + sales + '</td>'
             + '<td>' + daily.toFixed(2).replace('.', ',') + '</td>'
-            + '<td>' + stock + '</td>'
-            + '<td>' + transit + '</td>'
+            + '<td class="ord-td-tip" data-tipkind="k">' + stock + '</td>'
+            + '<td class="ord-td-tip" data-tipkind="t">' + transit + '</td>'
             + '<td>' + ordMultOf(r.code) + '</td>'
             + '<td class="qty-edit" contenteditable="true">' + r.qty + '</td>'
             + storeCells
@@ -5266,8 +5327,8 @@ function renderOrder() {
             + '<td>' + ordBadge(d ? d.g : '') + '</td>'
             + '<td>' + sales + '</td>'
             + '<td>' + daily.toFixed(2).replace('.', ',') + '</td>'
-            + '<td>' + stock + '</td>'
-            + '<td>' + transit + '</td>'
+            + '<td class="ord-td-tip" data-tipkind="k">' + stock + '</td>'
+            + '<td class="ord-td-tip" data-tipkind="t">' + transit + '</td>'
             + '<td>' + ordMultOf(r.code) + '</td>'
             + '<td class="qty-edit" contenteditable="true">' + r.qty + '</td>'
             + storeCells
