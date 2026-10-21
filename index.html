@@ -4147,7 +4147,7 @@ function dashLogout(){sessionStorage.removeItem('dashAuth');location.reload();}
 <button onclick="ordAddFromInput()" style="background:#2e7d32;color:#fff;border-color:#1b5e20;">Добавить позицию</button>
 <input type="text" id="search-Заказ" placeholder="Поиск по заказу (код/название)..." oninput="renderOrder()">
 </div>
-<div class="cloud-sync-bar" id="cloud-sync-bar">☁️ <b>Общий заказ:</b> <span class="cs-status" id="cs-status">—</span> <button onclick="ordCloudPush()">Сохранить общий заказ</button> <button onclick="ordCloudPull()">Загрузить общий заказ</button> <span class="cs-hint">виден на всех ПК после сохранения · если «нет связи» — открывайте дашборд по публичной ссылке, а не через предпросмотр Диска</span></div>
+<div class="cloud-sync-bar" id="cloud-sync-bar">☁️ <b>Общий заказ:</b> <span class="cs-status" id="cs-status">—</span> <button onclick="ordCloudPush()">Сохранить общий заказ</button> <button onclick="ordCloudPull()">Загрузить общий заказ</button> <span class="cs-hint">виден на всех ПК после сохранения · большие заказы сохраняются по частям</span></div>
 <div class="table-container"><table class="data-table" id="table-Заказ">
 <tr><th style="width:28px;"><input type="checkbox" id="ord-chk-all" onchange="ordToggleAll(this)"></th><th>Код</th><th>Артикул</th><th>Номенклатура</th><th>ABC</th><th>Продажи (11 дн.)</th><th>Продажи/день</th><th>Остаток</th><th>В пути</th><th>Кратность</th><th>Заказать, шт.</th><th>Заказ в Балтийск</th><th>Заказ в Советск</th><th>Заказ в Черняховск</th><th>Заказ в Мира</th><th>Заказ в Емельянова-Энергетиков</th><th>Заказ в Камская</th><th>Цена закуп., руб.</th><th>Сумма, руб.</th></tr>
 </table></div>
@@ -4485,23 +4485,45 @@ function ordCloudStatus(msg, ok) {
     if (el) el.textContent = msg;
     if (el) el.style.color = ok === false ? '#c62828' : (ok === true ? '#1b5e20' : '#283593');
 }
-function ordCloudPush() {
-    if (!ORD_ALL.length) { ordCloudStatus('заказ пуст — сохранять нечего', false); return; }
-    ordCloudStatus('сохранение...');
-    var payload = JSON.stringify({v: 1, ts: Date.now(), mode: document.getElementById('ord-mode').textContent, sub: document.getElementById('ord-mode-sub').textContent, rows: ORD_ALL});
-    ordCloudFetch('https://textdb.online/update/?key=' + ORD_CLOUD_KEY + '&value=' + encodeURIComponent(payload))
+// 1С-выгрузки бывают на 2600 позиций — URL целиком может превышать лимит хранилища, поэтому пишем по частям
+function ordCloudBuildParts(s) {
+    var parts = [], cur = [];
+    var raw;
+    for (var i = 0; i < s.rows.length; i++) {
+        cur.push(s.rows[i]);
+        raw = JSON.stringify({rows: cur});
+        if (encodeURIComponent(raw).length > 24000) { parts.push(cur.slice(0, cur.length - 1)); cur = [s.rows[i]]; }
+    }
+    if (cur.length) parts.push(cur);
+    return parts;
+}
+function ordCloudWriteKey(key, value) {
+    return ordCloudFetch('https://textdb.online/update/?key=' + key + '&value=' + encodeURIComponent(value))
         .then(function(res) {
             var j = null;
             try { j = JSON.parse(res.text); } catch (e) {}
-            if (j && j.status === 1) {
+            if (j && j.status === 1) return j;
+            throw new Error(j ? ('отклонено: ' + (j.error || '?')) : ('не-JSON ответ: ' + res.text.slice(0, 60)));
+        });
+}
+function ordCloudPush() {
+    if (!ORD_ALL.length) { ordCloudStatus('заказ пуст — сохранять нечего', false); return; }
+    ordCloudStatus('сохранение (0%)...');
+    var s = {v: 1, ts: Date.now(), mode: document.getElementById('ord-mode').textContent, sub: document.getElementById('ord-mode-sub').textContent, rows: ORD_ALL};
+    var parts = ordCloudBuildParts(s);
+    var chunkKey = ORD_CLOUD_KEY + '-' + s.ts.toString(36);
+    var idx = 0;
+    function next() {
+        if (idx >= parts.length) {
+            var man = {v: 1, ts: s.ts, mode: s.mode, sub: s.sub, parts: parts.length, chunkkey: chunkKey};
+            return ordCloudWriteKey(ORD_CLOUD_KEY, JSON.stringify(man)).then(function() {
                 ordCloudStatus('✓ сохранён общий заказ (' + new Date().toLocaleTimeString('ru-RU') + ')', true);
-            } else if (j) {
-                ordCloudStatus('хранилище отклонило запись: ' + (j.error || res.text.slice(0, 80)), false);
-            } else {
-                ordCloudStatus('хранилище вернуло не-JSON ответ (возможна блокировка сети): ' + res.text.slice(0, 60), false);
-            }
-        })
-        .catch(function(e) { ordCloudStatus(ordCloudErr(e) + ' · проверьте: страница открыта по ссылке https, а не через предпросмотр Диска', false); });
+            });
+        }
+        ordCloudStatus('сохранение (' + Math.round(idx * 100 / parts.length) + '%)...');
+        return ordCloudWriteKey(chunkKey + '-p' + idx, JSON.stringify({rows: parts[idx]})).then(function() { idx++; return next(); });
+    }
+    next().catch(function(e) { ordCloudStatus('не сохранено — ' + String(e.message || e) + ' · проверьте: страница открыта по публичной ссылке', false); });
 }
 function ordCloudApplyRemote(s, silent) {
     ORD_ALL = s.rows.map(function(r) {
@@ -4513,28 +4535,44 @@ function ordCloudApplyRemote(s, silent) {
     renderOrder();
     if (!silent) ordCloudStatus('✓ загружен общий заказ от ' + new Date(s.ts).toLocaleString('ru-RU'), true);
 }
+function ordCloudReadManifest() {
+    return ordCloudFetch(ORD_CLOUD_URL + '?nocache=' + Date.now()).then(function(res) {
+        if (!res.text.trim()) return null;
+        var s;
+        try { s = JSON.parse(res.text); } catch (e) { throw new Error('не-JSON ответ (возможна блокировка сети): ' + res.text.slice(0, 60)); }
+        if (!s) return null;
+        if (s.rows) return s; // старый формат без чанков
+        if (s.parts && s.chunkkey) {
+            var all = [], idx = 0;
+            function nextPart() {
+                if (idx >= s.parts) { s.rows = all; return s; }
+                return ordCloudFetch('https://textdb.online/' + s.chunkkey + '-p' + idx + '?nocache=' + Date.now()).then(function(pr) {
+                    var pj = JSON.parse(pr.text);
+                    if (pj && pj.rows) all = all.concat(pj.rows);
+                    idx++;
+                    return nextPart();
+                });
+            }
+            return nextPart();
+        }
+        return null;
+    });
+}
 function ordCloudPull() {
     ordCloudStatus('загрузка...');
-    ordCloudFetch(ORD_CLOUD_URL + '?nocache=' + Date.now())
-        .then(function(res) {
-            if (!res.text.trim()) { ordCloudStatus('общий заказ ещё не сохранялся', false); return; }
-            var s;
-            try { s = JSON.parse(res.text); } catch (e) { ordCloudStatus('хранилище вернуло не-JSON ответ (возможна блокировка сети): ' + res.text.slice(0, 60), false); return; }
+    ordCloudReadManifest()
+        .then(function(s) {
             if (s && s.rows && s.rows.length) ordCloudApplyRemote(s, false);
             else ordCloudStatus('общий заказ пуст', false);
         })
-        .catch(function(e) { ordCloudStatus(ordCloudErr(e) + ' · проверьте: страница открыта по ссылке https, а не через предпросмотр Диска', false); });
+        .catch(function(e) { ordCloudStatus(ordCloudErr(e) + ' · проверьте: страница открыта по публичной ссылке, а не через предпросмотр Диска', false); });
 }
 function ordCloudAutoLoad() {
     if (!ORD_ALL.length) {
-        ordCloudFetch(ORD_CLOUD_URL + '?nocache=' + Date.now())
-            .then(function(res) {
-                if (!res.text.trim()) { ordCloudStatus('общего заказа пока нет'); return; }
-                try {
-                    var s = JSON.parse(res.text);
-                    if (s && s.rows && s.rows.length) { ordCloudApplyRemote(s, true); ordCloudStatus('✓ общий заказ от ' + new Date(s.ts).toLocaleString('ru-RU'), true); }
-                    else ordCloudStatus('общего заказа пока нет');
-                } catch (e) { ordCloudStatus('—'); }
+        ordCloudReadManifest()
+            .then(function(s) {
+                if (s && s.rows && s.rows.length) { ordCloudApplyRemote(s, true); ordCloudStatus('✓ общий заказ от ' + new Date(s.ts).toLocaleString('ru-RU'), true); }
+                else ordCloudStatus('общего заказа пока нет');
             })
             .catch(function() { ordCloudStatus('—'); });
     } else {
