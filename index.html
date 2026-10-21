@@ -4479,7 +4479,7 @@ var ORD_CLOUD_KEY = 'mgb-dash-order-64747b8b14de4524';
 var ORD_CLOUD_URL = 'https://textdb.online/' + ORD_CLOUD_KEY;
 function ordCloudFetch(url, timeoutMs) {
     var ctl = new AbortController();
-    var t = setTimeout(function() { ctl.abort(); }, timeoutMs || 12000);
+    var t = setTimeout(function() { ctl.abort(); }, timeoutMs || 30000);
     return fetch(url, {method: 'GET', cache: 'no-store', signal: ctl.signal}).then(function(r) {
         clearTimeout(t);
         return r.text().then(function(txt) { return {status: r.status, ok: r.ok, text: txt}; });
@@ -4487,7 +4487,7 @@ function ordCloudFetch(url, timeoutMs) {
 }
 function ordCloudErr(e) {
     var m = String(e && e.message || e);
-    if (m.indexOf('abort') >= 0) return 'нет ответа от хранилища (таймаут 12 с)';
+    if (m.indexOf('abort') >= 0) return 'нет ответа от хранилища (таймаут 30 с)';
     return 'нет связи с хранилищем: ' + m;
 }
 function ordCloudStatus(msg, ok) {
@@ -4516,6 +4516,14 @@ function ordCloudWriteKey(key, value) {
             throw new Error(j ? ('отклонено: ' + (j.error || '?')) : ('не-JSON ответ: ' + res.text.slice(0, 60)));
         });
 }
+function ordCloudWriteRetry(key, value, label, attempt, onProgress) {
+    if (attempt === undefined) attempt = 1;
+    if (onProgress) onProgress(attempt);
+    return ordCloudWriteKey(key, value).catch(function(e) {
+        if (attempt < 2) { return ordCloudWriteRetry(key, value, label, attempt + 1, onProgress); }
+        throw new Error(label + ' · ' + String(e.message || e));
+    });
+}
 function ordCloudPush() {
     if (!ORD_ALL.length) { ordCloudStatus('заказ пуст — сохранять нечего', false); return; }
     ordCloudStatus('сохранение (0%)...');
@@ -4523,15 +4531,18 @@ function ordCloudPush() {
     var parts = ordCloudBuildParts(s);
     var chunkKey = ORD_CLOUD_KEY + '-' + s.ts.toString(36);
     var idx = 0;
+    function progress(attempt) {
+        ordCloudStatus('сохранение: часть ' + (idx + 1) + ' из ' + parts.length + (attempt > 1 ? ' (повтор ' + attempt + ')' : '') + '...');
+    }
     function next() {
         if (idx >= parts.length) {
-            var man = {v: 1, ts: s.ts, mode: s.mode, sub: s.sub, parts: parts.length, chunkkey: chunkKey};
-            return ordCloudWriteKey(ORD_CLOUD_KEY, JSON.stringify(man)).then(function() {
-                ordCloudStatus('✓ сохранён общий заказ (' + new Date().toLocaleTimeString('ru-RU') + ')', true);
-            });
+            return ordCloudWriteKey(ORD_CLOUD_KEY, JSON.stringify({v: 1, ts: s.ts, mode: s.mode, sub: s.sub, parts: parts.length, chunkkey: chunkKey}))
+                .then(function() { ordCloudStatus('✓ сохранён общий заказ (' + new Date().toLocaleTimeString('ru-RU') + ')', true); },
+                      function(e) { throw new Error('манифест · ' + String(e.message || e)); });
         }
-        ordCloudStatus('сохранение (' + Math.round(idx * 100 / parts.length) + '%)...');
-        return ordCloudWriteKey(chunkKey + '-p' + idx, JSON.stringify({rows: parts[idx]})).then(function() { idx++; return next(); });
+        ordCloudStatus('сохранение: часть ' + (idx + 1) + ' из ' + parts.length + '...');
+        return ordCloudWriteRetry(chunkKey + '-p' + idx, JSON.stringify({rows: parts[idx]}), 'часть ' + (idx + 1) + '/' + parts.length, 1, progress)
+            .then(function() { idx++; return next(); });
     }
     next().catch(function(e) { ordCloudStatus('не сохранено — ' + String(e.message || e) + ' · проверьте: страница открыта по публичной ссылке', false); });
 }
@@ -4557,7 +4568,8 @@ function ordCloudReadManifest() {
             function nextPart() {
                 if (idx >= s.parts) { s.rows = all; return s; }
                 return ordCloudFetch('https://textdb.online/' + s.chunkkey + '-p' + idx + '?nocache=' + Date.now()).then(function(pr) {
-                    var pj = JSON.parse(pr.text);
+                    var pj = null;
+                    try { pj = JSON.parse(pr.text); } catch (e) { throw new Error('часть ' + (idx + 1) + '/' + s.parts + ': не-JSON ответ'); }
                     if (pj && pj.rows) all = all.concat(pj.rows);
                     idx++;
                     return nextPart();
@@ -4589,7 +4601,6 @@ function ordCloudAutoLoad() {
         ordCloudStatus('есть локальный заказ — «Сохранить общий заказ», чтобы сделать его общим');
     }
 }
-
 // Всплывающие подсказки «Заказ»: остаток и «в пути» по магазинам
 var ordTipEl = null;
 function ordTipHtml(code, kind) {
@@ -4639,6 +4650,7 @@ function ordTipPos(e) {
         if (ordTipEl.style.display === 'block') ordTipPos(e);
     });
 })();
+
 
 function ordSaveState() {
     try {
