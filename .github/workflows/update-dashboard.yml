@@ -45,10 +45,24 @@ jobs:
           ls -la
           wc -c "index.html"
 
+      - name: Диагностика git-окружения
+        if: always()
+        run: |
+          echo "--- git config ---"
+          git config --list --local | grep -E "user|remote" || true
+          echo "--- права на запись ---"
+          touch .git/write-test && echo "запись в .git: OK" || echo "запись в .git: FAIL"
+          echo "--- состояние ветки ---"
+          git status --short --branch
+
+      # Коммит и push — попытка, но падение НЕ блокирует деплой Pages (continue-on-error).
       - name: Закоммитить изменения (если файл изменился)
+        id: commit_push
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -x
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
@@ -67,13 +81,16 @@ jobs:
           fi
 
       - name: Настроить GitHub Pages
+        if: always()
         uses: actions/configure-pages@v5
 
       - name: Упаковать сайт для публикации
+        if: always()
         uses: actions/upload-pages-artifact@v3
         with:
           path: "."
 
       - name: Опубликовать на GitHub Pages
+        if: always()
         id: deployment
         uses: actions/deploy-pages@v4
