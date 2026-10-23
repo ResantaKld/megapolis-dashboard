@@ -7,10 +7,9 @@ on:
 
 permissions:
   contents: write
-  pages: write            # нужно для публикации на GitHub Pages
-  id-token: write         # нужно для публикации на GitHub Pages
+  pages: write
+  id-token: write
 
-# чтобы одновременные запуски не конфликтовали при публикации Pages
 concurrency:
   group: "pages"
   cancel-in-progress: false
@@ -23,6 +22,8 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Получить прямую ссылку через публичный API Яндекс.Диска
         run: |
@@ -45,16 +46,25 @@ jobs:
           wc -c "index.html"
 
       - name: Закоммитить изменения (если файл изменился)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch origin
+          git pull --rebase origin main || true
           git add "index.html"
           if git diff --cached --quiet; then
             echo "Файл не изменился — коммит не нужен"
-            exit 0
+          else
+            git commit -m "Обновление дашборда с Яндекс.Диска ($(date -u +'%Y-%m-%d %H:%M') UTC)"
           fi
-          git commit -m "Обновление дашборда с Яндекс.Диска ($(date -u +'%Y-%m-%d %H:%M') UTC)"
-          git push
+          if [ -n "$(git log origin/main..HEAD --oneline 2>/dev/null)" ]; then
+            git push origin HEAD:main || { echo "--- push упал, повтор ---"; sleep 5; git pull --rebase origin main; git push origin HEAD:main; }
+          else
+            echo "Новых коммитов нет"
+          fi
 
       - name: Настроить GitHub Pages
         uses: actions/configure-pages@v5
